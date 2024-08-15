@@ -12,6 +12,8 @@ Description:
 Gets wav files from a directory on the sd card called 'music'. It then lists this files to be selected and played.
 
 Arrow keys to navigate/change songs, enter to play/pause.
+
+Note: this uses code and ispiration from other MicroHydra apps. 
 """
 
 # Constants
