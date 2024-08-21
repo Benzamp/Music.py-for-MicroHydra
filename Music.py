@@ -157,190 +157,214 @@ def format_time(seconds):
     minutes, secs = divmod(int(seconds), 60)
     return f"{minutes:02d}:{secs:02d}"
 
-class EasyWavMenu:
+class EasyWavMenu:       
     def __init__(self, tft, config):
         self.tft = tft
         self.config = config
-        self.main_items = ['Library', 'Shuffle', 'Download']
+        self.main_items = ['Library', 'Shuffle', 'Settings']
+        self.library_items = ['Artists', 'Albums', 'Songs']
         self.cursor_index = 0
         self.view_index = 0
-        self.current_view = 'main'  # 'main', 'library', or 'shuffle'
-        self.wav_list_view = None
+        self.current_view = 'main'
         self.items = self.main_items
+        self.artists = []
+        self.albums = []
+        self.songs = []
+        self.songs_by_artist = {}
+        self.songs_by_album = {}
+        self.current_artist = None
+        self.current_album = None
+        self.populate_music_lists()
+    
+    def populate_music_lists(self):
+        music_dir = '/sd/music'  # Adjust this path as needed
+        self.artists = []
+        self.albums = []
+        self.songs = []
+        self.songs_by_artist = {}
+        self.songs_by_album = {}
+
+        try:
+            for filename in os.listdir(music_dir):
+                if filename.endswith('.wav'):
+                    parts = filename[:-4].split(' - ')
+                    if len(parts) == 3:
+                        artist, album, song = parts
+                        
+                        if artist not in self.artists:
+                            self.artists.append(artist)
+                            self.songs_by_artist[artist] = []
+                        
+                        if album not in self.albums:
+                            self.albums.append(album)
+                            self.songs_by_album[album] = []
+                        
+                        if song not in self.songs:
+                            self.songs.append(song)
+                        
+                        self.songs_by_artist[artist].append(song)
+                        self.songs_by_album[album].append(song)
+
+            # Sort the lists
+            self.artists.sort()
+            self.albums.sort()
+            self.songs.sort()
+            for artist in self.songs_by_artist:
+                self.songs_by_artist[artist].sort()
+            for album in self.songs_by_album:
+                self.songs_by_album[album].sort()
+
+        except OSError as e:
+            print(f"Error accessing music directory: {e}")
 
     def draw(self):
         self.tft.fill(self.config["bg_color"])
         if self.current_view == 'main':
-            self._draw_main_menu()
-        elif self.current_view == 'library':
-            self.wav_list_view.draw()
+            self._draw_items(self.main_items)
+        elif self.current_view == 'library_submenu':
+            self._draw_items(self.library_items)
+        elif self.current_view == 'artists':
+            self._draw_items(self.artists)
+        elif self.current_view == 'albums':
+            self._draw_items(self.albums)
+        elif self.current_view == 'songs':
+            self._draw_items(self.songs)
+        elif self.current_view == 'artist_songs':
+            self._draw_items(self.songs_by_artist[self.current_artist])
+        elif self.current_view == 'album_songs':
+            self._draw_items(self.songs_by_album[self.current_album])
         self.tft.show()
 
-    def _draw_main_menu(self):
-        for idx, item in enumerate(self.main_items):
-            color = self.config.palette[5] if idx == self.cursor_index else self.config.palette[4]
+    def _draw_items(self, items):
+        for idx, item in enumerate(items[self.view_index:self.view_index + _ITEMS_PER_SCREEN]):
+            color = self.config.palette[5] if idx + self.view_index == self.cursor_index else self.config.palette[4]
             self.tft.bitmap_text(font, item, 10, idx * _CHAR_HEIGHT, color)
+
+    def get_full_filename(self, song):
+            for artist in self.songs_by_artist:
+                if song in self.songs_by_artist[artist]:
+                    for album in self.songs_by_album:
+                        if song in self.songs_by_album[album]:
+                            return f"{artist} - {album} - {song}.wav"
+            return None
 
     def select(self):
         if self.current_view == 'main':
             selected_item = self.main_items[self.cursor_index]
             if selected_item == 'Library':
-                self.open_library()
+                self.current_view = 'library_submenu'
+                self.cursor_index = 0
+                self.view_index = 0
+                self.items = self.library_items
             elif selected_item == 'Shuffle':
                 return self.shuffle_play()
-            elif selected_item == 'Download':
-                return self.show_download_message()
-        elif self.current_view == 'library':
-            return "play"
-
-    def show_download_message(self):
-        overlay.draw_textbox("Download feature", _DISPLAY_WIDTH//2, _DISPLAY_HEIGHT//2 - 10)
-        overlay.draw_textbox("coming soon!", _DISPLAY_WIDTH//2, _DISPLAY_HEIGHT//2 + 10)
-        self.tft.show()
-        time.sleep(2)  # Display the message for 2 seconds
+            elif selected_item == 'Settings':
+                return self.show_coming_soon_message()
+        elif self.current_view == 'library_submenu':
+            selected_item = self.library_items[self.cursor_index]
+            if selected_item == 'Artists':
+                self.current_view = 'artists'
+                self.cursor_index = 0
+                self.view_index = 0
+                self.items = self.artists
+            elif selected_item == 'Songs':
+                self.current_view = 'songs'
+                self.cursor_index = 0
+                self.view_index = 0
+                self.items = self.songs
+            elif selected_item == 'Albums':
+                self.current_view = 'albums'
+                self.cursor_index = 0
+                self.view_index = 0
+                self.items = self.albums
+            else:
+                return self.show_coming_soon_message(f"{selected_item} view")
+        elif self.current_view == 'artists':
+            self.current_artist = self.artists[self.cursor_index]
+            self.current_view = 'artist_songs'
+            self.cursor_index = 0
+            self.view_index = 0
+            self.items = self.songs_by_artist[self.current_artist]
+        elif self.current_view == 'albums':
+            self.current_album = self.albums[self.cursor_index]
+            self.current_view = 'album_songs'
+            self.cursor_index = 0
+            self.view_index = 0
+            self.items = self.songs_by_album[self.current_album]
+        elif self.current_view in ['songs', 'artist_songs', 'album_songs']:
+            selected_song = self.items[self.cursor_index]
+            full_filename = self.get_full_filename(selected_song)
+            if full_filename:
+                return "play", full_filename
         return "refresh"
 
-    def open_library(self):
-        print("Opening Library")
-        if not self.wav_list_view:
-            self.wav_list_view = WavListView(self.tft, self.config)
-        self.wav_list_view.load_wav_files()
-        self.current_view = 'library'
-        self.cursor_index = self.wav_list_view.cursor_index
-        self.items = self.wav_list_view.items
-
     def shuffle_play(self):
-        print("Starting Shuffle Play")
-        if not self.wav_list_view:
-            self.wav_list_view = WavListView(self.tft, self.config)
-            self.wav_list_view.load_wav_files()
-        if self.wav_list_view.items:
-            self.current_view = 'shuffle'
-            random_song = random.choice(self.wav_list_view.items)
-            print(f"Selected random song: {random_song}")
-            return "play_shuffle", random_song
-        else:
-            print("No songs available for shuffle play")
-            return None
+        if self.songs:
+            random_song = random.choice(self.songs)
+            full_filename = self.get_full_filename(random_song)
+            if full_filename:
+                return "play_shuffle", full_filename
+        print("No songs available for shuffle play")
+        return None
+
+    def show_coming_soon_message(self, feature="Settings"):
+        overlay.draw_textbox(f"{feature}", _DISPLAY_WIDTH//2, _DISPLAY_HEIGHT//2 - 10)
+        overlay.draw_textbox("in progress", _DISPLAY_WIDTH//2, _DISPLAY_HEIGHT//2 + 10)
+        self.tft.show()
+        time.sleep(2)
+        return "refresh"
 
     def up(self):
-        if self.current_view == 'main':
-            self.cursor_index = (self.cursor_index - 1) % len(self.main_items)
-        elif self.current_view == 'library':
-            self.wav_list_view.up()
-            self.cursor_index = self.wav_list_view.cursor_index
-            self.items = self.wav_list_view.items
+        if self.cursor_index > 0:
+            self.cursor_index -= 1
+            if self.cursor_index < self.view_index:
+                self.view_index = self.cursor_index
+        elif self.cursor_index == 0 and self.view_index > 0:
+            self.view_index -= 1
+            self.cursor_index = self.view_index
 
     def down(self):
-        if self.current_view == 'main':
-            self.cursor_index = (self.cursor_index + 1) % len(self.main_items)
-        elif self.current_view == 'library':
-            self.wav_list_view.down()
-            self.cursor_index = self.wav_list_view.cursor_index
-            self.items = self.wav_list_view.items
+        if self.cursor_index < len(self.items) - 1:
+            self.cursor_index += 1
+            if self.cursor_index >= self.view_index + _ITEMS_PER_SCREEN:
+                self.view_index = self.cursor_index - _ITEMS_PER_SCREEN + 1
 
     def back(self):
-        if self.current_view in ['library', 'shuffle']:
+        if self.current_view == 'library_submenu':
             self.current_view = 'main'
-            self.cursor_index = 0
             self.items = self.main_items
-            return True
-        return False
+        elif self.current_view in ['artists', 'albums', 'songs']:
+            self.current_view = 'library_submenu'
+            self.items = self.library_items
+        elif self.current_view == 'artist_songs':
+            self.current_view = 'artists'
+            self.items = self.artists
+            self.current_artist = None
+        elif self.current_view == 'album_songs':
+            self.current_view = 'albums'
+            self.items = self.albums
+            self.current_album = None
+        else:
+            return False
+        self.cursor_index = 0
+        self.view_index = 0
+        return True
 
     def handle_input(self, key):
-        if self.current_view == 'main':
-            if key == ";":
-                self.up()
-                return "up"
-            elif key == ".":
-                self.down()
-                return "down"
-            elif key in ("ENT", "SPC"):
-                return self.select()
-        elif self.current_view == 'library':
-            if key == ";":
-                self.wav_list_view.up()
-                self.cursor_index = self.wav_list_view.cursor_index
-                self.items = self.wav_list_view.items
-                return "up"
-            elif key == ".":
-                self.wav_list_view.down()
-                self.cursor_index = self.wav_list_view.cursor_index
-                self.items = self.wav_list_view.items
-                return "down"
-            elif key in ("ENT", "SPC"):
-                return self.select()
-        
-        if key in ("`", "DEL", "ESC", "BKSP"):
+        if key == ";":
+            self.up()
+            return "up"
+        elif key == ".":
+            self.down()
+            return "down"
+        elif key in ("ENT", "SPC"):
+            return self.select()
+        elif key in ("`", "DEL", "ESC", "BKSP"):
             if self.back():
                 return "back"
             else:
                 return "exit"
-        
         return None
-
-class WavListView:
-    def __init__(self, tft, config):
-        self.tft = tft
-        self.config = config
-        self.items = []
-        self.view_index = 0
-        self.cursor_index = 0
-
-    def load_wav_files(self):
-        try:
-            self.items = [f for f in os.listdir("/sd/music") if f.lower().endswith('.wav')]
-            print("WAV files found:", self.items)
-        except OSError as e:
-            print("Error loading WAV files:", str(e))
-            self.items = []
-
-    def draw(self):
-        if not self.items:
-            self.tft.bitmap_text(font, "No WAV files found", 10, 10, self.config.palette[4])
-        else:
-            for idx in range(0, _ITEMS_PER_SCREEN):
-                item_index = idx + self.view_index
-                if item_index < len(self.items):
-                    text = self.items[item_index]
-                    is_selected = (item_index == self.cursor_index)
-                    color = self.config.palette[5] if is_selected else self.config.palette[4]
-                    
-                    x = 10  # Default x position
-                    
-                    # Apply ping-pong scrolling only for the selected item if it's long
-                    if is_selected and len(text) > _CHARS_PER_SCREEN:
-                        scroll_distance = (len(text) - _CHARS_PER_SCREEN) * -16
-                        x = int(ping_pong_ease(time.ticks_ms(), _SCROLL_TIME) * scroll_distance)
-                    
-                    self.tft.bitmap_text(font, text, x, idx * _CHAR_HEIGHT, color)
-
-    def up(self):
-        if self.items:
-            self.cursor_index = (self.cursor_index - 1) % len(self.items)
-            self.view_to_cursor()
-
-    def down(self):
-        if self.items:
-            self.cursor_index = (self.cursor_index + 1) % len(self.items)
-            self.view_to_cursor()
-
-    def view_to_cursor(self):
-        if self.cursor_index < self.view_index:
-            self.view_index = self.cursor_index
-        if self.cursor_index >= self.view_index + _ITEMS_PER_SCREEN:
-            self.view_index = self.cursor_index - _ITEMS_PER_SCREEN + 1
-            
-    def back(self):
-        return True
-
-def ping_pong_ease(value, maximum):
-    odd_pong = ((value // maximum) % 2 == 1)
-    fac = ease_in_out_sine((value % maximum) / maximum)
-    return 1 - fac if odd_pong else fac
-
-def ease_in_out_sine(x):
-    return -(math.cos(math.pi * x) - 1) / 2
 
 def play_sound(notes, time_ms=30):
     if config['ui_sound']:
@@ -363,51 +387,44 @@ def main_loop():
                 play_sound(("D3","B3"), 30)
             elif action == "select":
                 play_sound(("G3","B3","D3"), 30)
-            elif action == "refresh":
-                # Refresh the WAV file list
-                if view.wav_list_view:
-                    view.wav_list_view.load_wav_files() 
-            if action == "play" or (isinstance(action, tuple) and action[0] == "play_shuffle"):
-                if view.current_view in ['library', 'shuffle'] and view.items:
-                    if isinstance(action, tuple) and action[0] == "play_shuffle":
-                        selected_file = action[1]
-                    else:
-                        selected_file = view.items[view.cursor_index]
-                    try:
-                        with open(f"/sd/music/{selected_file}", 'rb') as file:
-                            sample_rate = read_wav_header(file)
-                            setup_i2s(sample_rate)
-                            
-                            # Get file size for duration calculation
-                            file.seek(0, 2)
-                            file_size = file.tell()
-                            file.seek(44)  # Skip WAV header
-                            
-                            # Calculate total duration (approximate)
-                            duration = (file_size - 44) / (sample_rate * 2)  # 16-bit mono
-                            
-                            start_time = time.ticks_ms()
-                            while True:
-                                data = file.read(1024)
-                                if not data:
-                                    break
-                                i2s.write(data)
-                                
-                                # Calculate current position
-                                current_position = (time.ticks_ms() - start_time) / 1000
-                                
-                                # Update display every 1000ms
-                                if time.ticks_ms() % 1000 == 0:
-                                   display_play_screen(selected_file, duration, current_position)
-                                
-                                if kb.get_new_keys():  # Check for key press to stop playback
-                                    break
-                            
-                            i2s.deinit()
-                    except Exception as e:
-                        print(f"Error playing file: {str(e)}")
-                        overlay.error(f"Playback Error: {str(e)[:20]}")
+                
+            if isinstance(action, tuple) and action[0] in ["play", "play_shuffle"]:
+                selected_file = action[1]
+                try:
+                    with open(f"/sd/music/{selected_file}", 'rb') as file:
+                        sample_rate = read_wav_header(file)
+                        setup_i2s(sample_rate)
                         
+                        # Get file size for duration calculation
+                        file.seek(0, 2)
+                        file_size = file.tell()
+                        file.seek(44)  # Skip WAV header
+                        
+                        # Calculate total duration (approximate)
+                        duration = (file_size - 44) / (sample_rate * 2)  # 16-bit mono
+                        
+                        start_time = time.ticks_ms()
+                        while True:
+                            data = file.read(1024)
+                            if not data:
+                                break
+                            i2s.write(data)
+                            
+                            # Calculate current position
+                            current_position = (time.ticks_ms() - start_time) / 1000
+                            
+                            # Update display every 1000ms
+                            if time.ticks_ms() % 1000 == 0:
+                               display_play_screen(selected_file, duration, current_position)
+                            
+                            if kb.get_new_keys():  # Check for key press to stop playback
+                                break
+                        
+                        i2s.deinit()
+                except Exception as e:
+                    print(f"Error playing file: {str(e)}")
+                    overlay.error(f"Playback Error: {str(e)[:20]}")
+                    
             elif action == "back":
                 play_sound(("D3","B3","G3"), 30)
             elif action == "exit":
@@ -424,7 +441,3 @@ finally:
     if sd:
         os.umount('/sd')
         print("SD card unmounted")
-
-
-
-
