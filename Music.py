@@ -96,12 +96,9 @@ def setup_i2s(sample_rate):
                       rate=sample_rate,
                       ibuf=1024)
         
-def display_play_screen(selected_file, duration, current_position):
+def display_play_screen(selected_file):
     # Clear the screen
     tft.fill(config["bg_color"])
-    
-    # Load and display the background image
-    #load_and_display_image(selected_file) TODO - Get cover art background on play if possible.
     
     # Display song info
     parts = selected_file.rsplit('.', 1)[0].split(' - ')
@@ -117,7 +114,7 @@ def display_play_screen(selected_file, duration, current_position):
         info = [f"Playing: {selected_file}"]
     
     # Calculate starting y position to center the text vertically
-    total_height = len(info) * _SMALL_CHAR_HEIGHT + 20  # Add extra space for progress bar
+    total_height = len(info) * _SMALL_CHAR_HEIGHT
     start_y = (_DISPLAY_HEIGHT - total_height) // 2
     
     for idx, text in enumerate(info):
@@ -130,34 +127,13 @@ def display_play_screen(selected_file, duration, current_position):
         
         tft.bitmap_text(small_font, text, x, y, config.palette[4])
     
-    # Draw progress bar
-    bar_y = start_y + len(info) * _SMALL_CHAR_HEIGHT + 10
-    bar_height = 10
-    bar_width = _DISPLAY_WIDTH - 20  # Full width minus margins
-    
-    # Draw background of progress bar
-    tft.fill_rect(10, bar_y, bar_width, bar_height, config.palette[2])
-    
-    # Draw filled portion of progress bar
-    if duration > 0:
-        fill_width = int((current_position / duration) * bar_width)
-        tft.fill_rect(10, bar_y, fill_width, bar_height, config.palette[5])
-    
-    # Display time
-    current_time = format_time(current_position)
-    total_time = format_time(duration)
-    time_text = f"{current_time} / {total_time}"
-    time_x = (_DISPLAY_WIDTH - len(time_text) * _SMALL_CHAR_WIDTH) // 2
-    time_y = bar_y + bar_height + 5
-    tft.bitmap_text(small_font, time_text, time_x, time_y, config.palette[4])
-    
     tft.show()
 
 def format_time(seconds):
     minutes, secs = divmod(int(seconds), 60)
     return f"{minutes:02d}:{secs:02d}"
 
-class EasyWavMenu:       
+class EasyWavMenu:
     def __init__(self, tft, config):
         self.tft = tft
         self.config = config
@@ -236,9 +212,20 @@ class EasyWavMenu:
         self.tft.show()
 
     def _draw_items(self, items):
+        current_time = time.ticks_ms()
         for idx, item in enumerate(items[self.view_index:self.view_index + _ITEMS_PER_SCREEN]):
-            color = self.config.palette[5] if idx + self.view_index == self.cursor_index else self.config.palette[4]
-            self.tft.bitmap_text(font, item, 10, idx * _CHAR_HEIGHT, color)
+            is_selected = idx + self.view_index == self.cursor_index
+            color = self.config.palette[5] if is_selected else self.config.palette[4]
+            
+            # Apply ping-pong scrolling only to the selected item if it's long
+            if is_selected and len(item) > _CHARS_PER_SCREEN - 2:
+                scroll_distance = (len(item) - _CHARS_PER_SCREEN + 1) * 8  # Adjust for 8x8 font
+                x = int(self.ping_pong_ease(current_time, _SCROLL_TIME) * scroll_distance)
+                x = -x  # Reverse direction
+            else:
+                x = 0
+
+            self.tft.bitmap_text(font, item, x, idx * _CHAR_HEIGHT, color)
 
     def get_full_filename(self, song):
             for artist in self.songs_by_artist:
@@ -365,6 +352,14 @@ class EasyWavMenu:
             else:
                 return "exit"
         return None
+    
+    def ping_pong_ease(self, value, maximum):
+        odd_pong = ((value // maximum) % 2 == 1)
+        fac = self.ease_in_out_sine((value % maximum) / maximum)
+        return 1 - fac if odd_pong else fac
+
+    def ease_in_out_sine(self, x):
+        return -(math.cos(math.pi * x) - 1) / 2
 
 def play_sound(notes, time_ms=30):
     if config['ui_sound']:
@@ -390,35 +385,30 @@ def main_loop():
                 
             if isinstance(action, tuple) and action[0] in ["play", "play_shuffle"]:
                 selected_file = action[1]
+                
                 try:
                     with open(f"/sd/music/{selected_file}", 'rb') as file:
+                        display_play_screen(selected_file)
                         sample_rate = read_wav_header(file)
                         setup_i2s(sample_rate)
                         
-                        # Get file size for duration calculation
-                        file.seek(0, 2)
-                        file_size = file.tell()
-                        file.seek(44)  # Skip WAV header
-                        
-                        # Calculate total duration (approximate)
-                        duration = (file_size - 44) / (sample_rate * 2)  # 16-bit mono
-                        
-                        start_time = time.ticks_ms()
                         while True:
                             data = file.read(1024)
                             if not data:
                                 break
                             i2s.write(data)
                             
-                            # Calculate current position
-                            current_position = (time.ticks_ms() - start_time) / 1000
+                            # Continuously check for new key presses during playback
+                            new_keys = kb.get_new_keys()
+                            for key in new_keys:
+                                if key in ("`", "DEL", "ESC", "BKSP"):  # Exit playback
+                                    break
+                            else:
+                                # Continue playing if no exit key is pressed
+                                continue
                             
-                            # Update display every 1000ms
-                            if time.ticks_ms() % 1000 == 0:
-                               display_play_screen(selected_file, duration, current_position)
-                            
-                            if kb.get_new_keys():  # Check for key press to stop playback
-                                break
+                            # If exit key is pressed, break the loop
+                            break
                         
                         i2s.deinit()
                 except Exception as e:
@@ -431,6 +421,7 @@ def main_loop():
                 return  # Exit the app
         
         time.sleep_ms(10)
+
 
 try:
     main_loop()
